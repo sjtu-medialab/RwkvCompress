@@ -85,6 +85,26 @@ def unpad_centering(x, padding):
     )
 
 
+def rename_key(key: str) -> str:
+    """Rename state_dict key."""
+
+    # Deal with modules trained with DataParallel
+    if key.startswith("module."):
+        key = key[7:]
+
+    # ResidualBlockWithStride: 'downsample' -> 'skip'
+    if ".downsample." in key:
+        return key.replace("downsample", "skip")
+
+    # EntropyBottleneck: nn.ParameterList to nn.Parameters
+    if "entropy_bottleneck" in key:
+        key = key.replace("entropy_bottleneck.matrices.", "entropy_bottleneck._matrix")
+        key = key.replace("entropy_bottleneck.biases.", "entropy_bottleneck._bias")
+        key = key.replace("entropy_bottleneck.factors.", "entropy_bottleneck._factor")
+
+    return key
+
+
 def load_checkpoint(net_cls, checkpoint_path):
     checkpoint = torch.load(checkpoint_path, weights_only=True)
     if "state_dict" in checkpoint:
@@ -93,6 +113,7 @@ def load_checkpoint(net_cls, checkpoint_path):
         state_dict = checkpoint["model_state_dict"]
     else:
         state_dict = checkpoint
+    state_dict = {rename_key(k): v for k, v in state_dict.items()}
     net = net_cls.from_state_dict(state_dict)
     return net.eval()
 
