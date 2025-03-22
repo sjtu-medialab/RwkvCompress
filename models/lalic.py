@@ -21,9 +21,8 @@ from compressai.layers import (
     sequential_channel_ramp,
 )
 
-
-T_MAX = 512 * 512  # for training
-# T_MAX = 1024 * 1024  # for inference
+# T_MAX = 128 * 128  # for training on 256x256 crop
+T_MAX = 1024 * 1024  # for inference
 
 current_file_dir = os.path.dirname(os.path.abspath(__file__))
 biwkv4_cuda = load(

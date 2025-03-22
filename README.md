@@ -64,6 +64,11 @@ The R-D points in stored in `results/` directory.
 
 ## Quick Start
 
+The BiWKV operator will be automatically compiled upon loading. This operator critically depends on the `T_MAX` parameter, which limits the maximum number of tokens processed and GPU memory allocated. Manual adjustment of the `T_MAX` in `models/lalic.py` is required.
+
+- Inference Mode: Set `T_MAX` to 1024x1024 to accommodate high-resolution image processing.
+- Training Mode: Reduce `T_MAX` to 128x128 when using 256x256 image crops, to optimize memory usage, enabling increased batch_size.
+
 ### Training
 Train on [OpenImages dataset](https://storage.googleapis.com/openimages/web/index.html) (first 400K images):
 ```bash
@@ -72,6 +77,7 @@ CUDA_VISIBLE_DEVICES=0 python train.py \
     --lambda 0.0067 \
     --epochs 40 \
     --lr_epoch 36 \
+    --batch-size 8
     --save_path </path/for/saving> --save
 ```
 
@@ -127,7 +133,7 @@ Download all models from [Google Drive](https://drive.google.com/drive/folders/1
 This implementation builds upon several excellent projects:
 
 - [CompressAI](https://github.com/InterDigitalInc/CompressAI): A PyTorch library and evaluation platform for end-to-end compression research.
-- [TCM](https://github.com/jmliu206/LIC_TCM): Learned Image Compression with Mixed Transformer-CNN Architectures. (CVPR'23)
+- [TCM](https://github.com/jmliu206/LIC_TCM): Learned Image Compression with Mixed Transformer-CNN Architectures.
 - [Vision-RWKV](https://github.com/OpenGVLab/Vision-RWKV): Efficient and Scalable Visual Perception with RWKV-Like Architectures.
 - [Restore-RWKV](https://github.com/Yaziwel/Restore-RWKV): Efficient and Effective Medical Image Restoration with RWKV.
 
