@@ -21,39 +21,34 @@ from compressai.layers import (
     sequential_channel_ramp,
 )
 
-# T_MAX = 128 * 128  # for training on 256x256 crop
-T_MAX = 1024 * 1024  # for inference
 
-current_file_dir = os.path.dirname(os.path.abspath(__file__))
-biwkv4_cuda = load(
-    name="biwkv4",
-    sources=[
-        os.path.join(current_file_dir, "cuda/biwkv4_op.cpp"),
-        os.path.join(current_file_dir, "cuda/biwkv4_cuda.cu"),
-    ],
-    verbose=True,
-    extra_cuda_cflags=[
-        "-res-usage",
-        "--maxrregcount 60",
-        "--use_fast_math",
-        "-O3",
-        "-Xptxas -O3",
-        f"-DTmax={T_MAX}",
-    ],
-)
+def load_biwkv4():
+    # Bi-directional WKV version 4, a form of linear attention 
+    # from Vision-RWKV, https://github.com/OpenGVLab/Vision-RWKV
+    # commit dee3bbe: [add] update new version of cuda code, avoid hard code of T_MAX
+    current_file_dir = os.path.dirname(os.path.abspath(__file__))
+    biwkv4_cuda = load(
+        name="biwkv4",
+        sources=[
+            os.path.join(current_file_dir, "cuda/biwkv4_op_new.cpp"),
+            os.path.join(current_file_dir, "cuda/biwkv4_cuda_new.cu"),
+        ],
+        verbose=True,
+        extra_cuda_cflags=[
+            "-res-usage",
+            "--maxrregcount 60",
+            "--use_fast_math",
+            "-O3",
+            "-Xptxas -O3",
+            "-gencode arch=compute_86,code=sm_86",
+        ],
+    )
+    return biwkv4_cuda
 
 
 class BiWKV4(torch.autograd.Function):
-    # Bi-directional WKV version 4,
-    # from VisionRWKV https://github.com/OpenGVLab/Vision-RWKV
     @staticmethod
-    def forward(ctx, B, T, C, w, u, k, v):
-        ctx.B = B
-        ctx.T = T
-        ctx.C = C
-        assert T <= T_MAX
-        assert B * C % min(C, 1024) == 0
-
+    def forward(ctx, w, u, k, v):
         half_mode = w.dtype == torch.half
         bf_mode = w.dtype == torch.bfloat16
         ctx.save_for_backward(w, u, k, v)
@@ -61,8 +56,7 @@ class BiWKV4(torch.autograd.Function):
         u = u.float().contiguous()
         k = k.float().contiguous()
         v = v.float().contiguous()
-        y = torch.empty((B, T, C), device="cuda", memory_format=torch.contiguous_format)
-        biwkv4_cuda.forward(B, T, C, w, u, k, v, y)
+        y = torch.ops.biwkv4.forward(w, u, k, v)
         if half_mode:
             y = y.half()
         elif bf_mode:
@@ -71,56 +65,26 @@ class BiWKV4(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, gy):
-        B = ctx.B
-        T = ctx.T
-        C = ctx.C
-        assert T <= T_MAX
-        assert B * C % min(C, 1024) == 0
         w, u, k, v = ctx.saved_tensors
-        gw = torch.zeros((B, C), device="cuda").contiguous()
-        gu = torch.zeros((B, C), device="cuda").contiguous()
-        gk = torch.zeros((B, T, C), device="cuda").contiguous()
-        gv = torch.zeros((B, T, C), device="cuda").contiguous()
         half_mode = w.dtype == torch.half
         bf_mode = w.dtype == torch.bfloat16
-        biwkv4_cuda.backward(
-            B,
-            T,
-            C,
+        gw, gu, gk, gv = torch.ops.biwkv4.backward(
             w.float().contiguous(),
             u.float().contiguous(),
             k.float().contiguous(),
             v.float().contiguous(),
             gy.float().contiguous(),
-            gw,
-            gu,
-            gk,
-            gv,
         )
         if half_mode:
-            gw = torch.sum(gw.half(), dim=0)
-            gu = torch.sum(gu.half(), dim=0)
-            return (None, None, None, gw.half(), gu.half(), gk.half(), gv.half())
+            return (gw.half(), gu.half(), gk.half(), gv.half())
         elif bf_mode:
-            gw = torch.sum(gw.bfloat16(), dim=0)
-            gu = torch.sum(gu.bfloat16(), dim=0)
-            return (
-                None,
-                None,
-                None,
-                gw.bfloat16(),
-                gu.bfloat16(),
-                gk.bfloat16(),
-                gv.bfloat16(),
-            )
+            return (gw.bfloat16(), gu.bfloat16(), gk.bfloat16(), gv.bfloat16())
         else:
-            gw = torch.sum(gw, dim=0)
-            gu = torch.sum(gu, dim=0)
-            return (None, None, None, gw, gu, gk, gv)
+            return (gw, gu, gk, gv)
 
 
-def RUN_BiWKV4(B, T, C, w, u, k, v):
-    return BiWKV4.apply(B, T, C, w.cuda(), u.cuda(), k.cuda(), v.cuda())
+def RUN_BiWKV4(w, u, k, v):
+    return BiWKV4.apply(w.cuda(), u.cuda(), k.cuda(), v.cuda())
 
 
 class OmniShift(nn.Module):
@@ -237,7 +201,7 @@ class SpatialMix_BiV4(nn.Module):
     def forward(self, x, resolution):
         B, T, C = x.size()
         sr, k, v = self.jit_func(x, resolution)
-        x = RUN_BiWKV4(B, T, C, self.decay / T, self.boost / T, k, v)
+        x = RUN_BiWKV4(self.decay / T, self.boost / T, k, v)
         x = sr * x
         x = self.output(x)
         return x
@@ -332,7 +296,7 @@ def form_modules(*modules):
 class EntropyParametersBlock(nn.Module):
     def __init__(self, dim, out_dim, expansion_factor=2, **kwargs):
         super().__init__()
-        
+
         hidden_dim = int(expansion_factor * out_dim)
         self.mix = nn.Conv2d(dim, out_dim, 1)
         self.norm = nn.LayerNorm(out_dim)
@@ -373,6 +337,7 @@ class LALIC(Elic2022Official):
         L1, L2, L3, L4 = depths
         M = N4
 
+        load_biwkv4()
         # flatten the list
         self.g_a = form_modules(
             conv(3, N1, kernel_size=5),

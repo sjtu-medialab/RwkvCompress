@@ -63,10 +63,17 @@ We provide the R-D points in JSON format in `results/` directory for reference.
 
 ## Quick Start
 
-The BiWKV operator will be automatically compiled upon loading. This operator critically depends on the `T_MAX` parameter, which limits the maximum number of tokens processed and GPU memory allocated. Manual adjustment of the `T_MAX` in `models/lalic.py` is required.
+The BiWKV operator will be automatically compiled upon loading. 
 
-- Inference Mode: Set `T_MAX` to 1024x1024 to accommodate high-resolution image processing.
-- Training Mode: Reduce `T_MAX` to 128x128 when using 256x256 image crops, to optimize memory usage, enabling increased batch_size.
+<details>
+<summary>More about BiWKV ...</summary>
+
+2025-03-31: After upstream updates, `T_MAX` is no longer required. BD-rate variation is negligible (< 0.01%) after updates.
+
+2025-03-23: This operator critically depends on the `T_MAX` parameter, which limits the maximum number of tokens processed and GPU memory allocated. Manual adjustment of the `T_MAX` in `models/lalic.py` is required.
+
+</details>
+
 
 ### Training
 
@@ -140,5 +147,4 @@ This implementation builds upon several excellent projects:
 - [FAT-LIC](https://github.com/qingshi9974/ICLR2024-FTIC): Frequency-aware Transformer for Learned Image Compression.
 - [Vision-RWKV](https://github.com/OpenGVLab/Vision-RWKV): Efficient and Scalable Visual Perception with RWKV-Like Architectures.
 - [Restore-RWKV](https://github.com/Yaziwel/Restore-RWKV): Efficient and Effective Medical Image Restoration with RWKV.
-
 
